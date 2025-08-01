@@ -1,4 +1,4 @@
-#SR Method Automation & Live Monitoring Project
+# SR Method Automation & Live Monitoring Project
 
 This project provides a complete solution for monitoring and automating key aspects of an sr method, including temperature, water level, and pump control, with real-time anomaly detection and a professional web interface.
 
