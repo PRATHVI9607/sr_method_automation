@@ -1,0 +1,170 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap');
+
+:root {
+    --background-start: #e0f7fa; /* Light cyan */
+    --background-end: #f0f8ff;   /* Alice blue */
+    --primary-text: #01579b;   /* Deep blue */
+    --secondary-text: #455a64; /* Blue-grey */
+    --shadow-light: rgba(255, 255, 255, 0.9);
+    --shadow-dark: rgba(186, 217, 235, 0.7);
+    --accent-color: #0288d1;
+    --danger-color: #d32f2f;
+    --anomaly-color: #c62828;
+    --nominal-color: #2e7d32;
+}
+
+body {
+    font-family: 'Poppins', sans-serif;
+    margin: 0;
+    padding: 25px;
+    background: linear-gradient(145deg, var(--background-start), var(--background-end));
+    color: var(--secondary-text);
+    overflow-x: hidden; /* Prevent horizontal scroll */
+}
+
+.main-header {
+    text-align: center;
+    margin-bottom: 40px;
+}
+
+.main-header h1 {
+    font-size: 2.8rem;
+    font-weight: 600;
+    color: var(--primary-text);
+    text-shadow: 1px 1px 2px var(--shadow-light);
+}
+
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 30px;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+.card, .chart-container, .log-container {
+    padding: 25px;
+    border-radius: 20px;
+    background: linear-gradient(145deg, var(--background-end), var(--background-start));
+    box-shadow: 8px 8px 16px var(--shadow-dark), -8px -8px 16px var(--shadow-light);
+    transition: box-shadow 0.3s ease;
+}
+
+.card:hover, .chart-container:hover, .log-container:hover {
+    box-shadow: 12px 12px 24px var(--shadow-dark), -12px -12px 24px var(--shadow-light);
+}
+
+section h2 {
+    margin-top: 0;
+    font-weight: 400;
+    font-size: 1.4rem;
+    color: var(--primary-text);
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.card {
+    text-align: center;
+}
+
+.card p {
+    font-size: 3rem;
+    font-weight: 600;
+    color: var(--primary-text);
+    margin: 10px 0 15px 0;
+}
+
+.pump-status {
+    font-size: 1.1rem;
+}
+
+.card-anomaly #anomaly-status {
+    font-size: 2.2rem;
+    font-weight: 600;
+    color: var(--nominal-color);
+}
+.card-anomaly #anomaly-status.ANOMALY {
+    color: var(--anomaly-color);
+    animation: pulse 1.5s infinite;
+}
+.card-anomaly small {
+    font-size: 0.9rem;
+}
+
+.chart-container, .log-container {
+    grid-column: 1 / -1; /* Make these sections span the full width */
+}
+
+/* This wrapper prevents the chart from causing layout shifts */
+.chart-wrapper {
+    position: relative;
+    height: 350px;
+}
+
+.log-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+.log-buttons .button {
+    background: transparent;
+    border: 1px solid var(--accent-color);
+    color: var(--accent-color);
+    padding: 10px 20px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 600;
+    font-family: 'Poppins';
+    font-size: 0.9rem;
+    box-shadow: 4px 4px 8px var(--shadow-dark), -4px -4px 8px var(--shadow-light);
+    transition: all 0.2s ease-in-out;
+}
+
+.log-buttons .button:hover {
+    box-shadow: inset 2px 2px 4px var(--shadow-dark), inset -2px -2px 4px var(--shadow-light);
+    color: var(--primary-text);
+}
+
+.button.button-danger {
+    border-color: var(--danger-color);
+    color: var(--danger-color);
+}
+.button.button-danger:hover {
+    color: #fff;
+    background: var(--danger-color);
+}
+
+.table-wrapper {
+    overflow-x: auto;
+    border-radius: 10px;
+    box-shadow: inset 4px 4px 8px var(--shadow-dark), inset -4px -4px 8px var(--shadow-light);
+    margin-top: 20px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+th, td {
+    padding: 14px 18px;
+    text-align: left;
+    border-bottom: 1px solid var(--shadow-dark);
+}
+thead {
+    color: var(--primary-text);
+}
+tbody tr:last-child td {
+    border-bottom: none;
+}
+tbody tr:nth-child(even) {
+    background-color: rgba(219, 237, 245, 0.3);
+}
+
+@keyframes pulse {
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.05); opacity: 0.9; }
+    100% { transform: scale(1); opacity: 1; }
+}

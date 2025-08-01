@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aquarium Live Monitor</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <header class="main-header">
+        <h1>Aquarium Live Monitor</h1>
+    </header>
+
+    <main class="dashboard-grid">
+        <!-- Live Status Cards -->
+        <section class="card">
+            <h2>Temperature</h2>
+            <p id="temp-value">--.- °C</p>
+        </section>
+
+        <section class="card">
+            <h2>Water Level</h2>
+            <p id="level-value">-- %</p>
+            <div class="pump-status">
+                <span>Pump Status: </span><strong id="pump-status">---</strong>
+            </div>
+        </section>
+
+        <section class="card card-anomaly">
+            <h2>System Status</h2>
+            <p id="anomaly-status">NOMINAL</p>
+            <small id="anomaly-value">Vibration Value: --</small>
+        </section>
+        
+        <!-- Live Chart -->
+        <section class="chart-container">
+             <h2>Live Data Analysis</h2>
+             <div class="chart-wrapper">
+                <canvas id="liveChart"></canvas>
+             </div>
+        </section>
+        
+        <!-- Log Table -->
+        <section class="log-container">
+            <div class="log-header">
+                <h2>Event Log</h2>
+                <div class="log-buttons">
+                    <a href="/download" class="button">Download CSV Log</a>
+                    <button class="button button-danger" onclick="clearLog()">Clear Log</button>
+                </div>
+            </div>
+            <div class="table-wrapper">
+                <table id="log-table">
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Temp (°C)</th>
+                            <th>Level (%)</th>
+                            <th>Pump</th>
+                            <th>Anomaly</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Log data is inserted here by script.js -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+    
+    <script src="script.js"></script>
+</body>
+</html>

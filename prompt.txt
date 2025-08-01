@@ -1,0 +1,143 @@
+please i want your help with my aquarium automation :
+i have 3 things now  :
+stm32 interfsced with the accelerometer adxl345 module (dotn generte code for this its already with me and dont make me chnge any wired of it )
+a transmitter esp32 :
+give me the code to interface temperature sensor (ds18b20 not dht11) , a analog water levele sensor which tells the 5V water pump connected along the relay module.
+a reciever esp32 :
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
+#include <HardwareSerial.h>
+// WiFi Credentials
+const char* ssid = "A2B";
+const char* password = "adityaab";
+// ThingSpeak Info
+const char* thingspeakServer = "api.thingspeak.com";
+String apiKey = "TGFKUWTJRHCZDTEM";
+// HiveMQ MQTT Info
+const char* mqtt_server = "4be1c9efcf4447819f8e105ac8f70131.s1.eu.hivemq.cloud";
+const int mqtt_port = 8883;
+const char* mqtt_topic = "sr_method/vibration/status";
+const char* mqtt_client_id = "ESP32_Client";
+const char* mqtt_username = "sr_method";
+const char* mqtt_password = "Such1r_Df";
+// Serial connection to STM32 (UART2)
+HardwareSerial stmSerial(2);  // UART2 on GPIO16 (RX), GPIO17 (TX)
+// Clients
+WiFiClientSecure secureClient;
+PubSubClient mqttClient(secureClient);
+WiFiClient thingClient;
+unsigned long lastNominalUpdate = 0;
+const unsigned long NOMINAL_DELAY = 16000;  // 16 seconds
+// Setup WiFi
+void setup_wifi() {
+Serial.print("Connecting to WiFi");
+WiFi.begin(ssid, password);
+while (WiFi.status() != WL_CONNECTED) {
+delay(500); Serial.print(".");
+}
+Serial.println("\nWiFi connected. IP: " + WiFi.localIP().toString());
+}
+// Connect to HiveMQ MQTT broker
+void connectToMQTT() {
+secureClient.setInsecure();  // skip certificate validation for simplicity
+mqttClient.setServer(mqtt_server, mqtt_port);
+while (!mqttClient.connected()) {
+Serial.print("Connecting to MQTT...");
+if (mqttClient.connect(mqtt_client_id, mqtt_username, mqtt_password)) {
+Serial.println("connected.");
+mqttClient.publish(mqtt_topic, "ESP32 online");
+} else {
+Serial.print("failed, rc=");
+Serial.print(mqttClient.state());
+delay(2000);
+}
+}
+}
+void publishToMQTT(String msg) {
+bool success = mqttClient.publish(mqtt_topic, msg.c_str());
+if (success)
+Serial.println("MQTT Published: " + msg);
+else
+Serial.println("MQTT publish failed!");
+}
+void sendToThingSpeak(int status, int value) {
+if (thingClient.connect(thingspeakServer, 80)) {
+String url = "/update?api_key=" + apiKey;
+url += "&field1=" + String(status);
+url += "&field2=" + String(value);
+Generated code
+Serial.println("Sending to ThingSpeak: " + url);
+thingClient.print(String("GET ") + url + " HTTP/1.1\r\n" +
+"Host: " + thingspeakServer + "\r\n" +
+"Connection: close\r\n\r\n");
+delay(1000);
+while (thingClient.available()) {
+String line = thingClient.readStringUntil('\r');
+Serial.print(line);
+}
+thingClient.stop();
+Serial.println("\nThingSpeak update done");
+Use code with caution.
+} else {
+Serial.println("ThingSpeak connection failed.");
+}
+}
+// Process received line from STM32
+void handleMessage(String message) {
+message.trim();
+if (!message.startsWith("NOMINAL") && !message.startsWith("ANOMALY")) {
+Serial.println("Ignored invalid message: " + message);
+return;
+}
+int status = -1;
+int value = 0;
+int commaIndex = message.indexOf(',');
+if (commaIndex > 0) {
+value = message.substring(commaIndex + 1).toInt();
+} else {
+Serial.println("Invalid format: " + message);
+return;
+}
+if (message.startsWith("ANOMALY")) status = 1;
+else status = 0;
+if (status == 1) {
+publishToMQTT(message);             // Always send ANOMALY to MQTT
+sendToThingSpeak(status, value);    // Also log ANOMALY to ThingSpeak
+} else {
+// Rate-limit NOMINAL ThingSpeak logging
+if (millis() - lastNominalUpdate > NOMINAL_DELAY) {
+sendToThingSpeak(status, value);
+lastNominalUpdate = millis();
+} else {
+Serial.println("NOMINAL skipped (rate limit)");
+}
+}
+}
+void setup() {
+Serial.begin(115200);                       // Debug to USB
+stmSerial.begin(9600, SERIAL_8N1, 16, 17);  // STM32 UART: RX=GPIO16
+setup_wifi();
+connectToMQTT();
+}
+void loop() {
+if (!mqttClient.connected()) {
+connectToMQTT();
+}
+mqttClient.loop();  // Keep MQTT connection alive
+static String uartLine = "";
+// Read from STM32 via UART
+while (stmSerial.available()) {
+char c = stmSerial.read();
+if (c == '\n') {
+handleMessage(uartLine);
+Serial.println("Received: " + uartLine);
+uartLine = "";
+} else {
+uartLine += c;
+}
+}
+}
+this is the cureent reciever esp32 code which recieves data only from the stm32 abt the accelerometer . i want the reciever esp32 to recieve data from both the stm32 and transmiter esp32 and that too using UART architecture . thingspeak of matlab is used here also . dont remove that . i want reciever esp32 to also recieve data from both stm32 and transmitter esp32 abt the sensors data. i want it to display it in web server which has a very pofessional ui which looks like it is made by a professional not a child . i want the colours to be simple in a simple morning sky blue graident theme and it should dispaly the temperature , water level and when its refilling and also whethe the pump is woking and also the anamoly detections that the stm32 makes . keep the ui simple and the different objects should be easy to make out using the difference in textures and gradients in borders . the data should be uploaded to a csv file which logs the records every 2 minutes. the server should also read the dsta from the csv and display the last 10 recrds in the webpage and alos a download csv button to donwload all the datat present in the esp32 (im not using a sd card module , im using the built in flash memory smtg like spiffs present in the esp32) and it shoudl also have a clear log button which clears the logs in the esp32. also add a graph analyisis of live anamolies , temperature data. using beautiful ui graphs . make the ui 2.5D so that it looks veyr very beautiful.
+i want to make it a live server (ie the esp32 will be connected on the Aquarium. a pc connected to reciever esp32 via the wifi or the mobile . i want a live website(i want to host it in github pages) using which i can monitor it from anywhere kilometers away from the aquariuma nd pc setup. i can view the data from any device using the live website link.)
+i also wan to push the project to the ithub also . ls hekp me amke this project and give the whole directory circuit onnections everything . also  dotn change any fuction that the reciever esp32 code is already eprforming . just add functions and code for the uart architecture and the datat ro reciever from the transmitter esp32. make it easy amd give the connections, steps sevrything in the readme file .
