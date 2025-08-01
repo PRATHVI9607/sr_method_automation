@@ -1,0 +1,6 @@
+../Core/Src/main.c:53:6:uart_printf	1
+../Core/Src/main.c:63:19:Read_ADXL345	2
+../Core/Src/main.c:75:6:fill_accelerometer_buffer	3
+../Core/Src/main.c:87:5:main	4
+../Core/Src/main.c:141:6:SystemClock_Config	3
+../Core/Src/main.c:172:6:Error_Handler	1
