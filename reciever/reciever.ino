@@ -1,3 +1,15 @@
+// =================================================================
+//                 AQUARIUM AUTOMATION - RECEIVER
+// =================================================================
+// This code is the central hub for the aquarium monitor. It:
+// - Listens for sensor data from a transmitter ESP32.
+// - Listens for anomaly data from an STM32 board.
+// - Hosts a web server to display live data.
+// - Logs all data to a local CSV file.
+// - Sends data and alerts to cloud services (ThingSpeak, IFTTT).
+// -----------------------------------------------------------------
+
+// --- LIBRARIES ---
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <SPIFFS.h>
@@ -5,327 +17,344 @@
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <HardwareSerial.h>
+#include <HTTPClient.h>
 
-// --- WiFi Credentials ---
-const char* ssid = "A2B";       // Your WiFi SSID
-const char* password = "adityaab"; // Your WiFi Password
+// --- CONFIGURATION: NETWORK & SERVICES ---
+const char* WIFI_SSID       = "HACHIMAN_PRATHVI";
+const char* WIFI_PASSWORD   = "prathvi9607";
 
-// --- ThingSpeak Info ---
-const char* thingspeakServer = "api.thingspeak.com";
-String apiKey = "TGFKUWTJRHCZDTEM"; // Your ThingSpeak API Key
+const char* THINGSPEAK_API_KEY = "TGFKUWTJRHCZDTEM";
 
-// --- HiveMQ MQTT Info ---
-const char* mqtt_server = "4be1c9efcf4447819f8e105ac8f70131.s1.eu.hivemq.cloud";
-const int mqtt_port = 8883;
-const char* mqtt_topic = "sr_method/vibration/status";
-const char* mqtt_client_id = "ESP32_Receiver_Client";
-const char* mqtt_username = "sr_method";
-const char* mqtt_password = "Such1r_Df";
+const char* MQTT_SERVER     = "4be1c9efcf4447819f8e105ac8f70131.s1.eu.hivemq.cloud";
+const int   MQTT_PORT       = 8883;
+const char* MQTT_TOPIC      = "sr_method/vibration/status";
+const char* MQTT_CLIENT_ID  = "ESP32_Receiver_Client";
+const char* MQTT_USERNAME   = "sr_method";
+const char* MQTT_PASSWORD   = "Such1r_Df";
 
-// --- Serial Connections ---
-// Serial to STM32 (ADXL345 data) on UART2
-HardwareSerial stmSerial(2);     // RX=16, TX=17
-// Serial from Transmitter ESP32 (Sensor data) on UART1
-HardwareSerial transmitterSerial(1); // RX=9, TX=10
+const char* IFTTT_API_KEY   = "YOUR_IFTTT_KEY_HERE";
+const char* IFTTT_EVENT     = "aquarium_anomaly";
 
-// --- Global State Variables ---
-float current_temperature = 0.0;
-int current_water_level = 0;
-String current_pump_status = "OFF";
-String current_anomaly_status = "NOMINAL";
-int current_anomaly_value = 0;
+// --- CONFIGURATION: HARDWARE & TIMING ---
+#define STM32_RX_PIN        16
+#define STM32_TX_PIN        17 // Not used for receiving, but good practice to define
+#define TRANSMITTER_RX_PIN  21
+#define TRANSMITTER_TX_PIN  22
 
-// --- Clients ---
-WiFiClientSecure secureClient;
-PubSubClient mqttClient(secureClient);
-WiFiClient thingClient;
-AsyncWebServer server(80);
+const unsigned long LOG_INTERVAL_MS = 120000; // 2 minutes
+const char* LOG_FILE_PATH = "/datalog.csv";
 
-// --- Timers and Constants ---
-unsigned long lastNominalUpdate = 0;
-const unsigned long NOMINAL_DELAY = 16000;
-unsigned long lastLogTime = 0;
-const unsigned long LOG_INTERVAL = 120000; // Log every 2 minutes
-const char* LOG_FILE = "/datalog.csv";
+// --- GLOBAL STATE VARIABLES ---
+// These variables hold the latest data from all sensors.
+float   g_temperature = 0.0;
+int     g_waterLevel  = 0;
+String  g_pumpStatus  = "OFF";
+String  g_anomalyStatus = "NOMINAL";
+int     g_anomalyValue  = 0;
+bool    g_notificationSent = false;
 
-// --- WiFi Setup --- (Your original function, works great)
-void setup_wifi() {
-  Serial.print("Connecting to WiFi");
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500); Serial.print(".");
-  }
-  Serial.println("\nWiFi connected. IP: " + WiFi.localIP().toString());
-}
+// --- GLOBAL OBJECTS ---
+WiFiClientSecure g_secureClient;
+PubSubClient     g_mqttClient(g_secureClient);
+AsyncWebServer   g_server(80);
+HardwareSerial   g_stmSerial(2);
+HardwareSerial   g_transmitterSerial(1);
+unsigned long    g_lastLogTime = 0;
 
-// --- MQTT Connect --- (Your original function)
-void connectToMQTT() {
-  secureClient.setInsecure();
-  mqttClient.setServer(mqtt_server, mqtt_port);
-  while (!mqttClient.connected()) {
-    Serial.print("Connecting to MQTT...");
-    if (mqttClient.connect(mqtt_client_id, mqtt_username, mqtt_password)) {
-      Serial.println("connected.");
-      mqttClient.publish(mqtt_topic, "ESP32 Receiver online");
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(mqttClient.state());
-      delay(2000);
-    }
-  }
-}
+// =================================================================
+//                  FUNCTION PROTOTYPES
+// =================================================================
+// --- SETUP FUNCTIONS ---
+void setupCommunications();
+void setupNetworking();
+void setupFileSystem();
+void setupWebServer();
 
-// --- Publish to MQTT --- (Your original function)
-void publishToMQTT(String msg) {
-  if (!mqttClient.connected()) {
-    connectToMQTT();
-  }
-  bool success = mqttClient.publish(mqtt_topic, msg.c_str());
-  if (success)
-    Serial.println("MQTT Published: " + msg);
-  else
-    Serial.println("MQTT publish failed!");
-}
+// --- NETWORK FUNCTIONS ---
+void connectWiFi();
+void connectMQTT();
+void sendToThingSpeak();
+void triggerIFTTT(const String& status, int value);
 
-// --- Send to ThingSpeak --- (Your original function, with added fields)
-void sendToThingSpeak() {
-  if (thingClient.connect(thingspeakServer, 80)) {
-    String url = "/update?api_key=" + apiKey;
-    url += "&field1=" + String(current_anomaly_status == "ANOMALY" ? 1 : 0);
-    url += "&field2=" + String(current_anomaly_value);
-    url += "&field3=" + String(current_temperature);
-    url += "&field4=" + String(current_water_level);
-    Serial.println("Sending to ThingSpeak: " + url);
-    thingClient.print(String("GET ") + url + " HTTP/1.1\r\n" +
-                      "Host: " + thingspeakServer + "\r\n" +
-                      "Connection: close\r\n\r\n");
-    thingClient.stop();
-  } else {
-    Serial.println("ThingSpeak connection failed.");
-  }
-}
+// --- LOGIC & HANDLER FUNCTIONS ---
+void handleStmMessage(const String& message);
+void handleTransmitterMessage(const String& message);
+void listFiles();
+void logData();
+void checkSerialPorts();
 
-// --- Process STM32 Message ---
-void handleStmMessage(String message) {
-  message.trim();
-  Serial.println("Received from STM32: " + message);
-  int commaIndex = message.indexOf(',');
-  if (commaIndex <= 0) {
-      Serial.println("Ignored invalid STM32 message: " + message);
-      return;
-  }
-  
-  String statusStr = message.substring(0, commaIndex);
-  int value = message.substring(commaIndex + 1).toInt();
-  
-  current_anomaly_value = value;
-  
-  if (statusStr == "ANOMALY") {
-      current_anomaly_status = "ANOMALY";
-      publishToMQTT(message); // Send ANOMALY to MQTT
-      sendToThingSpeak(); // Log all data to ThingSpeak on ANOMALY
-  } else if (statusStr == "NOMINAL") {
-      current_anomaly_status = "NOMINAL";
-      // Rate-limit NOMINAL ThingSpeak logging
-      if (millis() - lastNominalUpdate > NOMINAL_DELAY) {
-          sendToThingSpeak();
-          lastNominalUpdate = millis();
-      }
-  }
-}
 
-// --- Process Transmitter ESP32 Message ---
-void handleTransmitterMessage(String message) {
-  message.trim();
-  Serial.println("Received from Transmitter: " + message);
-
-  int tempIndex = message.indexOf("TEMP:");
-  int levelIndex = message.indexOf(",LEVEL:");
-  int pumpIndex = message.indexOf(",PUMP:");
-
-  if (tempIndex != -1 && levelIndex != -1 && pumpIndex != -1) {
-    String tempStr = message.substring(tempIndex + 5, levelIndex);
-    String levelStr = message.substring(levelIndex + 7, pumpIndex);
-    String pumpStr = message.substring(pumpIndex + 6);
-    
-    current_temperature = tempStr.toFloat();
-    current_water_level = levelStr.toInt();
-    current_pump_status = pumpStr;
-  } else {
-    Serial.println("Ignored invalid Transmitter message format.");
-  }
-}
-
-// --- File System Functions ---
-void appendFile(fs::FS &fs, const char * path, const char * message) {
-    File file = fs.open(path, FILE_APPEND);
-    if(!file) {
-        Serial.println("Failed to open file for appending");
-        return;
-    }
-    file.println(message);
-    file.close();
-}
-
-void logDataToCsv() {
-    String timestamp = String(millis() / 1000); // Simple timestamp
-    String logEntry = timestamp + "," + String(current_temperature) + "," + String(current_water_level) + "," +
-                      current_pump_status + "," + current_anomaly_status + "," + String(current_anomaly_value);
-
-    appendFile(SPIFFS, LOG_FILE, logEntry.c_str());
-    Serial.println("Logged data to CSV: " + logEntry);
-}
-
-// --- Web Server Request Handlers ---
-void setupWebServer() {
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-        request->send(SPIFFS, "/index.html", "text/html");
-    });
-    server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request){
-        request->send(SPIFFS, "/style.css", "text/css");
-    });
-    server.on("/script.js", HTTP_GET, [](AsyncWebServerRequest *request){
-        request->send(SPIFFS, "/script.js", "text/javascript");
-    });
-
-    server.on("/data", HTTP_GET, [](AsyncWebServerRequest *request){
-        JsonDocument doc;
-        doc["temperature"] = current_temperature;
-        doc["waterLevel"] = current_water_level;
-        doc["pumpStatus"] = current_pump_status;
-        doc["anomalyStatus"] = current_anomaly_status;
-        doc["anomalyValue"] = current_anomaly_value;
-        String json;
-        serializeJson(doc, json);
-        request->send(200, "application/json", json);
-    });
-    
-    server.on("/log", HTTP_GET, [](AsyncWebServerRequest *request) {
-        File file = SPIFFS.open(LOG_FILE, "r");
-        if (!file) {
-            request->send(200, "application/json", "[]");
-            return;
-        }
-
-        JsonArray doc = JsonDocument().to<JsonArray>();
-        // Read last 10 lines (simple approach)
-        String lines[10];
-        int lineCount = 0;
-        while(file.available()){
-            lines[lineCount % 10] = file.readStringUntil('\n');
-            lineCount++;
-        }
-        file.close();
-
-        for(int i = 0; i < 10 && i < lineCount; i++){
-          String line = lines[(lineCount - i - 1) % 10];
-          line.trim();
-          if(line.length() == 0) continue;
-          
-          JsonObject obj = doc.add<JsonObject>();
-          char lineBuf[256];
-          line.toCharArray(lineBuf, sizeof(lineBuf));
-
-          char *p = strtok(lineBuf, ",");
-          if(p) obj["timestamp"] = p;
-          p = strtok(NULL, ",");
-          if(p) obj["temperature"] = p;
-          p = strtok(NULL, ",");
-          if(p) obj["waterLevel"] = p;
-          p = strtok(NULL, ",");
-          if(p) obj["pumpStatus"] = p;
-          p = strtok(NULL, ",");
-          if(p) obj["anomalyStatus"] = p;
-          p = strtok(NULL, ",");
-          if(p) obj["anomalyValue"] = p;
-        }
-        
-        String json;
-        serializeJson(doc, json);
-        request->send(200, "application/json", json);
-    });
-
-    server.on("/download", HTTP_GET, [](AsyncWebServerRequest *request){
-        request->send(SPIFFS, LOG_FILE, "text/csv", true);
-    });
-
-    server.on("/clear", HTTP_POST, [](AsyncWebServerRequest *request){
-        SPIFFS.remove(LOG_FILE);
-        // Create a new empty file with header
-        File file = SPIFFS.open(LOG_FILE, FILE_WRITE);
-        file.println("Timestamp,Temp,Level,Pump,Anomaly,Value");
-        file.close();
-        request->send(200, "text/plain", "Log cleared");
-    });
-    
-    server.begin();
-}
-
+// =================================================================
+//                   PRIMARY SETUP AND LOOP
+// =================================================================
 void setup() {
     Serial.begin(115200);
+    Serial.println("\n\n--- Booting Aquarium Monitor Receiver ---");
 
-    // Start UART for STM32
-    stmSerial.begin(9600, SERIAL_8N1, 16, 17);
-    // Start UART for Transmitter ESP32
-    transmitterSerial.begin(9600, SERIAL_8N1, 9, 10);
-    
-    // Initialize SPIFFS
-    if(!SPIFFS.begin(true)){
-        Serial.println("An Error has occurred while mounting SPIFFS");
-        return;
-    }
-
-    // Create log file with header if it doesn't exist
-    if (!SPIFFS.exists(LOG_FILE)) {
-      File file = SPIFFS.open(LOG_FILE, FILE_WRITE);
-      if (file) {
-        file.println("Timestamp,Temp,Level,Pump,Anomaly,Value");
-        file.close();
-      }
-    }
-
-    setup_wifi();
-    connectToMQTT();
+    setupCommunications();
+    setupNetworking();
+    setupFileSystem();
     setupWebServer();
 
-    Serial.println("Receiver setup complete. Web server started.");
-    Serial.print("Access at http://");
-    Serial.println(WiFi.localIP());
+    Serial.println("\n--- Setup Complete: System is now running. ---");
 }
 
 void loop() {
-  if (!mqttClient.connected()) {
-    connectToMQTT();
-  }
-  mqttClient.loop();
+    // Keep MQTT connection alive
+    if (!g_mqttClient.connected()) {
+        connectMQTT();
+    }
+    g_mqttClient.loop();
 
-  // Check for data from STM32
-  if (stmSerial.available()) {
-      static String stmLine = "";
-      char c = stmSerial.read();
-      if (c == '\n') {
-          handleStmMessage(stmLine);
-          stmLine = "";
-      } else {
-          stmLine += c;
-      }
-  }
+    // Check for incoming data on serial ports
+    checkSerialPorts();
 
-  // Check for data from Transmitter ESP32
-  if (transmitterSerial.available()) {
-      static String transmitterLine = "";
-      char c = transmitterSerial.read();
-      if (c == '\n') {
-          handleTransmitterMessage(transmitterLine);
-          transmitterLine = "";
-      } else {
-          transmitterLine += c;
-      }
-  }
+    // Periodically log data to the CSV file
+    if (millis() - g_lastLogTime > LOG_INTERVAL_MS) {
+        logData();
+        g_lastLogTime = millis();
+    }
+}
 
-  // Log data periodically
-  if (millis() - lastLogTime > LOG_INTERVAL) {
-      logDataToCsv();
-      lastLogTime = millis();
-  }
+
+// =================================================================
+//                       SETUP FUNCTIONS
+// =================================================================
+void setupCommunications() {
+    g_stmSerial.begin(9600, SERIAL_8N1, STM32_RX_PIN, STM32_TX_PIN);
+    Serial.println("UART for STM32 initialized.");
+    g_transmitterSerial.begin(9600, SERIAL_8N1, TRANSMITTER_RX_PIN, TRANSMITTER_TX_PIN);
+    Serial.println("UART for Transmitter ESP32 initialized.");
+}
+
+void setupNetworking() {
+    connectWiFi();
+    connectMQTT();
+}
+
+void setupFileSystem() {
+    if (!SPIFFS.begin(true)) {
+        Serial.println("[FATAL] Failed to mount SPIFFS. Halting.");
+        while (1) { delay(1000); }
+    }
+    Serial.println("File System mounted.");
+    listFiles(); // List files for debugging purposes
+
+    // Create log file with header if it doesn't exist
+    if (!SPIFFS.exists(LOG_FILE_PATH)) {
+        File file = SPIFFS.open(LOG_FILE_PATH, FILE_WRITE);
+        if (file) {
+            file.println("Timestamp,Temp,Level,Pump,Anomaly,Value");
+            file.close();
+            Serial.println("Created new log file.");
+        }
+    }
+}
+
+
+// =================================================================
+//                       NETWORK FUNCTIONS
+// =================================================================
+void connectWiFi() {
+    Serial.print("Connecting to WiFi...");
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    WiFi.setSleep(false);
+
+    unsigned long startTime = millis();
+    while (WiFi.status() != WL_CONNECTED) {
+        if (millis() - startTime > 20000) { // 20-second timeout
+            Serial.println("\n[FATAL] WiFi connection failed. Please check credentials. Rebooting.");
+            delay(1000);
+            ESP.restart();
+        }
+        Serial.print(".");
+        delay(500);
+    }
+    Serial.println("\nWiFi connected. IP Address: " + WiFi.localIP().toString());
+}
+
+void connectMQTT() {
+    g_secureClient.setInsecure(); // Required for HiveMQ Cloud with this library
+    g_mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
+
+    if (g_mqttClient.connect(MQTT_CLIENT_ID, MQTT_USERNAME, MQTT_PASSWORD)) {
+        Serial.println("MQTT connected successfully.");
+        g_mqttClient.publish(MQTT_TOPIC, "ESP32 Receiver Online");
+    } else {
+        Serial.println("[Warning] MQTT connection failed. Will retry in the background.");
+    }
+}
+
+void sendToThingSpeak() {
+    if (WiFi.status() != WL_CONNECTED) return;
+    
+    WiFiClient client;
+    if (client.connect("api.thingspeak.com", 80)) {
+        String url = "/update?api_key=" + String(THINGSPEAK_API_KEY);
+        url += "&field1=" + String(g_anomalyStatus == "ANOMALY" ? 1 : 0);
+        url += "&field2=" + String(g_anomalyValue);
+        url += "&field3=" + String(g_temperature);
+        url += "&field4=" + String(g_waterLevel);
+        
+        client.print("GET " + url + " HTTP/1.1\r\n");
+        client.print("Host: api.thingspeak.com\r\n");
+        client.print("Connection: close\r\n\r\n");
+        client.stop();
+        Serial.println("ThingSpeak data sent.");
+    }
+}
+
+void triggerIFTTT(const String& status, int value) {
+    if (WiFi.status() != WL_CONNECTED) return;
+    
+    HTTPClient http;
+    String url = "https://maker.ifttt.com/trigger/" + String(IFTTT_EVENT) + "/with/key/" + String(IFTTT_API_KEY);
+    http.begin(url);
+    http.addHeader("Content-Type", "application/json");
+
+    JsonDocument doc;
+    doc["value1"] = status;
+    doc["value2"] = value;
+    String payload;
+    serializeJson(doc, payload);
+
+    if (http.POST(payload) == HTTP_CODE_OK) {
+        Serial.println("IFTTT alert triggered successfully.");
+    } else {
+        Serial.println("[Error] IFTTT alert failed.");
+    }
+    http.end();
+}
+
+
+// =================================================================
+//                  LOGIC & HANDLER FUNCTIONS
+// =================================================================
+
+void checkSerialPorts() {
+    if (g_stmSerial.available()) {
+        String message = g_stmSerial.readStringUntil('\n');
+        handleStmMessage(message);
+    }
+    if (g_transmitterSerial.available()) {
+        String message = g_transmitterSerial.readStringUntil('\n');
+        handleTransmitterMessage(message);
+    }
+}
+
+void handleStmMessage(const String& message) {
+    String msg = message;
+    msg.trim();
+    
+    int comma = msg.indexOf(',');
+    if (comma == -1) return; // Invalid format
+
+    g_anomalyStatus = msg.substring(0, comma);
+    g_anomalyValue = msg.substring(comma + 1).toInt();
+
+    if (g_anomalyStatus == "ANOMALY") {
+        if (!g_notificationSent) {
+            Serial.println(">>> ANOMALY DETECTED! Sending alert. <<<");
+            triggerIFTTT(g_anomalyStatus, g_anomalyValue);
+            g_notificationSent = true;
+        }
+    } else { // NOMINAL
+        if (g_notificationSent) {
+            Serial.println(">>> System returned to NOMINAL. <<<");
+            g_notificationSent = false;
+        }
+    }
+    
+    // Always send data when anomaly is detected or things have changed
+    if (g_anomalyStatus == "ANOMALY") {
+      if (g_mqttClient.connected()) g_mqttClient.publish(MQTT_TOPIC, msg.c_str());
+      sendToThingSpeak();
+    }
+}
+
+void handleTransmitterMessage(const String& message) {
+    String msg = message;
+    msg.trim();
+    
+    // More robust parsing
+    int tempStart = msg.indexOf("TEMP:") + 5;
+    int levelStart = msg.indexOf("LEVEL:") + 6;
+    int pumpStart = msg.indexOf("PUMP:") + 5;
+
+    if (tempStart > 4 && levelStart > 5 && pumpStart > 4) {
+        g_temperature = msg.substring(tempStart, msg.indexOf(",LEVEL:")).toFloat();
+        g_waterLevel = msg.substring(levelStart, msg.indexOf(",PUMP:")).toInt();
+        g_pumpStatus = msg.substring(pumpStart);
+    }
+}
+
+void logData() {
+    File file = SPIFFS.open(LOG_FILE_PATH, FILE_APPEND);
+    if (file) {
+        String entry = String(millis()) + "," + String(g_temperature) + "," +
+                       String(g_waterLevel) + "," + g_pumpStatus + "," +
+                       g_anomalyStatus + "," + String(g_anomalyValue);
+        file.println(entry);
+        file.close();
+        Serial.println("Data logged to CSV.");
+    }
+}
+
+void listFiles() {
+    Serial.println("\n--- Listing Files in SPIFFS ---");
+    File root = SPIFFS.open("/");
+    File file = root.openNextFile();
+    while(file){
+        Serial.printf("  FILE: %s, SIZE: %d bytes\n", file.name(), file.size());
+        file = root.openNextFile();
+    }
+    if (!SPIFFS.exists("/index.html")) {
+      Serial.println("[CRITICAL ERROR] /index.html is missing!");
+    }
+    Serial.println("--- File List Complete ---\n");
+}
+
+
+// =================================================================
+//                       WEB SERVER SETUP
+// =================================================================
+
+void setupWebServer() {
+    // Handler for live data
+    g_server.on("/data", HTTP_GET, [](AsyncWebServerRequest *request){
+        JsonDocument doc;
+        doc["temperature"] = g_temperature;
+        doc["waterLevel"] = g_waterLevel;
+        doc["pumpStatus"] = g_pumpStatus;
+        doc["anomalyStatus"] = g_anomalyStatus;
+        doc["anomalyValue"] = g_anomalyValue;
+        String json;
+        serializeJson(doc, json);
+        request->send(200, "application/json", json);
+    });
+
+    // Handler to download the full log file
+    g_server.on("/download", HTTP_GET, [](AsyncWebServerRequest *request){
+        request->send(SPIFFS, LOG_FILE_PATH, "text/csv", true);
+    });
+
+    // Handler to clear the log file
+    g_server.on("/clear", HTTP_POST, [](AsyncWebServerRequest *request){
+        SPIFFS.remove(LOG_FILE_PATH);
+        // Recreate the file with a header
+        File file = SPIFFS.open(LOG_FILE_PATH, FILE_WRITE);
+        if (file) { file.println("Timestamp,Temp,Level,Pump,Anomaly,Value"); file.close(); }
+        request->send(200, "text/plain", "Log Cleared");
+    });
+    
+    // This serves the main web page and all associated files (CSS, JS)
+    g_server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
+
+    // Handler for "Page Not Found"
+    g_server.onNotFound([](AsyncWebServerRequest *request){
+        request->send(404, "text/plain", "Error: Not Found");
+    });
+
+    g_server.begin();
+    Serial.println("Web Server has started.");
 }
